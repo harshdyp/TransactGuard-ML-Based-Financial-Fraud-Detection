@@ -1,0 +1,418 @@
+\documentclass[12pt,a4paper]{report}
+
+% -------------------------
+% Packages (simple and stable)
+% -------------------------
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\onehalfspacing
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue,
+  citecolor=black
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray}
+}
+
+% -------------------------
+% Fill these before printing
+% -------------------------
+\newcommand{\ProjectTitle}{FraudX: Advanced Fraud Detection with Explainable AI}
+\newcommand{\AcademicYear}{2024--2025}
+\newcommand{\DepartmentName}{Department of Artificial Intelligence and Data Science}
+\newcommand{\CollegeName}{D. Y. Patil College of Engineering, Akurdi, Pune}
+\newcommand{\UniversityName}{Savitribai Phule Pune University}
+\newcommand{\GuideName}{<Guide Name>}
+\newcommand{\GroupNumber}{<Group Number>}
+\newcommand{\StudentA}{<Student 1 Name (Seat No: )>}
+\newcommand{\StudentB}{<Student 2 Name (Seat No: )>}
+\newcommand{\StudentC}{<Student 3 Name (Seat No: )>}
+\newcommand{\StudentD}{<Student 4 Name (Seat No: )>}
+
+\begin{document}
+
+% -------------------------
+% COVER PAGE / TITLE PAGE
+% -------------------------
+\begin{titlepage}
+  \centering
+  \vspace*{1.0cm}
+  {\Large (Final) Project Report On\par}
+  \vspace{0.6cm}
+  {\LARGE \textbf{\ProjectTitle}\par}
+  \vspace{1.0cm}
+  {\large by\par}
+  \vspace{0.4cm}
+  {\large \StudentA\par}
+  {\large \StudentB\par}
+  {\large \StudentC\par}
+  {\large \StudentD\par}
+  \vspace{0.9cm}
+  {\large Under the guidance of\par}
+  \vspace{0.3cm}
+  {\large \textbf{\GuideName}\par}
+  \vfill
+  {\large \DepartmentName\par}
+  {\large \textbf{\CollegeName}\par}
+  {\large \textbf{\UniversityName}\par}
+  {\large \AcademicYear\par}
+\end{titlepage}
+
+% -------------------------
+% CERTIFICATE (placeholder)
+% -------------------------
+\chapter*{Certificate}
+This page is to be printed in the official college-provided format and signed by the project guide, project coordinator (if applicable), Head of Department, and external examiner.
+\vspace{1.5cm}
+
+\noindent \textbf{Project Guide:} \GuideName \hfill \textbf{Date:} \rule{3cm}{0.4pt}\\[0.8cm]
+\noindent \textbf{Head of Department:} \rule{6cm}{0.4pt} \hfill \textbf{External Examiner:} \rule{4cm}{0.4pt}
+
+% -------------------------
+% ABSTRACT
+% -------------------------
+\chapter*{Abstract}
+FraudX is an end-to-end fraud detection and investigation support system built for transaction screening and analyst triage. The system trains a supervised machine learning classifier (Random Forest) using a synthetic transaction generator that simulates realistic fraud and non-fraud behaviors such as abnormal transaction velocity, unusual transaction timing, repeated failed attempts, cross-border transfers, cryptocurrency usage, VPN/IP changes, and risk list involvement (known fraudsters and sanctioned entities). During inference, FraudX computes a probability-based \textit{Suspicion Score} for each transaction and flags suspicious records using a configurable threshold. To make results easier to interpret, the system assigns a single primary fraud category (\texttt{Fraud\_Type}) using a prioritized rule engine and generates human-readable reasons (\texttt{Suspicion\_Reasons}) to support analyst review. The project includes an interactive Streamlit dashboard for CSV upload, threshold tuning, visualization, and export, and an optional FastAPI interface for programmatic scoring. This report documents the motivation, requirements, architecture, modeling, implementation, results, testing approach, and the AI/data-science concepts used in the project.
+
+\vspace{0.4cm}
+\noindent\textbf{Keywords:} Fraud Detection, Random Forest, Explainable AI, Risk Scoring, Thresholding, Streamlit, FastAPI, Transaction Analytics
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+% -------------------------
+% II) INTRODUCTION
+% -------------------------
+\chapter{Introduction}
+\section{Background}
+The growth of online payments, mobile wallets, UPI-like systems, and cross-border digital transfers has increased transaction volume and speed. While this improves user convenience, it also creates opportunities for fraudulent behavior such as account takeover, identity misuse, laundering through cross-border routing, and abuse of payment rails. Organizations face two practical problems: (1) fraud patterns are continuously changing, and (2) analyst teams have limited capacity to investigate every suspicious-looking record.
+
+FraudX is designed as an analyst-centric screening system. Instead of making a final, irreversible fraud decision, it produces a ranked set of suspicious transactions and provides additional context (fraud type and reasons) to support efficient human review. This design reflects a realistic workflow: the model supports decision-making but accountability remains with investigators and policy owners.
+
+\section{Detailed Problem Definition}
+Given transaction data in CSV format, the objective is to build a system that:
+\begin{itemize}
+  \item Ingests transaction records from uploaded CSV files.
+  \item Repairs or standardizes the schema so missing fields do not break scoring.
+  \item Preprocesses input features and aligns them with the training feature schema.
+  \item Computes a per-transaction risk score (\texttt{Suspicion\_Score}) using a trained ML model.
+  \item Flags suspicious transactions (\texttt{Is\_Suspicious}) based on a configurable threshold.
+  \item Assigns a single primary fraud category (\texttt{Fraud\_Type}) to improve investigation routing.
+  \item Generates human-readable explanation text (\texttt{Suspicion\_Reasons}).
+  \item Presents analytics and exports results for reporting and downstream investigation.
+\end{itemize}
+
+\section{Justification of the Problem}
+Manual investigation alone cannot scale to large datasets, and purely rule-based systems can become noisy or brittle when attackers adapt. On the other hand, a black-box model without explanations is hard to trust, justify, and operationalize. FraudX addresses this by combining probability scoring (to rank cases) with deterministic rules (for consistent categories) and readable reasons (for quick analyst understanding).
+
+\section{Need for the New System}
+The project addresses the need for an end-to-end, reusable pipeline:
+\begin{itemize}
+  \item A training script that generates data and saves reproducible artifacts.
+  \item A scoring pipeline that reliably handles new CSV uploads.
+  \item A UI that supports threshold tuning based on workload and risk appetite.
+  \item Outputs (CSV exports and charts) that can be used in reports and reviews.
+\end{itemize}
+
+\section{Advances / Additions Over Existing Systems}
+\begin{itemize}
+  \item \textbf{Operational threshold tuning:} allows stakeholders to control the false positive vs recall trade-off.
+  \item \textbf{Hybrid approach:} ML ranking + rule-based primary category improves interpretability.
+  \item \textbf{Explainable output:} reasons help analysts start investigation quickly.
+  \item \textbf{Reproducible artifacts:} model, scaler, importances, and metrics are persisted and reused.
+\end{itemize}
+
+\section{Aim and Objectives}
+\textbf{Aim:} To design and implement an explainable fraud detection prototype demonstrating the complete AI/DS lifecycle.
+
+\vspace{0.2cm}
+\noindent\textbf{Objectives:}
+\begin{itemize}
+  \item Design a transaction schema and feature set that represents realistic fraud indicators.
+  \item Generate synthetic labeled transaction data and risk lists.
+  \item Train a supervised ML model and evaluate it with standard classification metrics.
+  \item Save trained artifacts for consistent inference.
+  \item Implement preprocessing, scoring, thresholding, rule-based labeling, and explanation generation.
+  \item Build an interactive Streamlit dashboard to upload data, visualize results, and export suspicious rows.
+  \item Provide an optional API for programmatic access (service-style architecture).
+\end{itemize}
+
+\section{Presently Available Systems}
+Fraud detection solutions commonly use rule engines, supervised classification, unsupervised anomaly detection, and graph analytics. Each has strengths: rules offer clear policy enforcement, supervised models learn from historical labels, anomaly detection helps when labels are limited, and graph models capture relationship-based fraud. FraudX demonstrates a practical supervised baseline combined with rules and explanations, suitable for demonstrating applied ML engineering.
+
+\section{Purpose of the System}
+FraudX is primarily an academic and demonstration system. It is intended to show the end-to-end implementation of an ML-driven screening workflow that can later be extended with production-grade monitoring, security, governance, and explainability.
+
+\section{Organization of the Report}
+This report contains analysis and requirement categorization, SRS summary and risk assessment, modeling and diagrams (to be attached), implementation details (tools, algorithms, and components), results and analysis, testing plan and cases, AI/DS concepts used, and software quality considerations, followed by conclusion, references, and glossary.
+
+% -------------------------
+% III) ANALYSIS
+% -------------------------
+\chapter{Analysis}
+\section{Project Plan}
+The work was executed in iterative phases:
+\begin{itemize}
+  \item Literature survey and problem finalization.
+  \item Defining the dataset schema and feature set.
+  \item Implementing synthetic data generation for fraud and legitimate behaviors.
+  \item Training the model and persisting artifacts (\texttt{*.joblib}).
+  \item Implementing a robust scoring pipeline for CSV uploads.
+  \item Building analyst UI with visualization and export capabilities.
+  \item Adding an optional API layer for service-oriented design.
+  \item Testing and report preparation.
+\end{itemize}
+
+\section{Requirement Analysis}
+\subsection{Necessary Functions}
+\begin{itemize}
+  \item Upload/ingest CSV transaction data.
+  \item Preprocessing and schema alignment to the trained feature set.
+  \item Scoring using the saved model and scaler.
+  \item Threshold-based suspicious flag.
+  \item Export suspicious transactions with computed fields.
+\end{itemize}
+
+\subsection{Desirable Functions}
+\begin{itemize}
+  \item Rule-based \texttt{Fraud\_Type} classification.
+  \item Human-readable \texttt{Suspicion\_Reasons}.
+  \item Visual analytics (KPIs, distributions, fraud-type summaries).
+  \item Theme/UI improvements for better usability.
+\end{itemize}
+
+\subsection{Other Functions}
+\begin{itemize}
+  \item API endpoints for single/batch scoring.
+  \item Persisted training metrics and feature importances.
+  \item Extendability for case management and feedback loop.
+\end{itemize}
+
+\section{Team Structure}
+For a group project, responsibilities can be distributed as:
+\begin{itemize}
+  \item \textbf{ML \& Data:} feature design, synthetic generation, model training and evaluation.
+  \item \textbf{Engine/Backend:} schema alignment, scoring, rule engine, explanations.
+  \item \textbf{UI/Visualization:} Streamlit dashboard, charts, download exports.
+  \item \textbf{QA/Documentation:} testing, reporting, references and formatting.
+\end{itemize}
+
+% -------------------------
+% IV) DESIGN
+% -------------------------
+\chapter{Design}
+\section{SRS (Software Requirements Specification) --- Summary}
+\subsection{Purpose}
+To screen transaction data and produce actionable, interpretable risk outputs for analyst review.
+
+\subsection{Inputs}
+Transaction records in CSV format (recommended columns include \texttt{Transaction\_ID}, date/time, sender/receiver, countries, payment method, amount, currency, velocity, behavior flags, and risk-list flags).
+
+\subsection{Outputs}
+\begin{itemize}
+  \item \texttt{Suspicion\_Score} (probability-like model score)
+  \item \texttt{Is\_Suspicious} (threshold-based flag)
+  \item \texttt{Fraud\_Type} (primary category from prioritized rules)
+  \item \texttt{Suspicion\_Reasons} (readable reasons)
+\end{itemize}
+
+\subsection{Constraints}
+\begin{itemize}
+  \item Must handle missing columns gracefully.
+  \item Must align features to the same schema used during training.
+  \item Must load persisted artifacts reliably and display errors if unavailable.
+\end{itemize}
+
+\subsection{Interfaces}
+Streamlit UI for analysts and optional FastAPI endpoints for integration.
+
+\section{Risk Assessment}
+\begin{longtable}{p{3.2cm}p{10.4cm}}
+\toprule
+\textbf{Risk} & \textbf{Mitigation} \\\midrule
+Data / concept drift & Monitor distributions and performance; retrain with new labeled data periodically.\\
+Class imbalance & Use PR-AUC and cost-based thresholds; sampling/weights for training.\\
+Schema mismatch & Column mapping and strong validation; clear UI errors for missing critical fields.\\
+Explainability gaps & Add local explanations (e.g., SHAP) and store explanation metadata for audit.\\
+Security and PII & RBAC, secure storage, retention policies, and restricted access for sensitive data.\\
+\bottomrule
+\end{longtable}
+
+% -------------------------
+% V) MODELING
+% -------------------------
+\chapter{Modeling}
+\section{High-Level Architecture}
+FraudX is organized as:
+\begin{itemize}
+  \item \textbf{Presentation layer:} Streamlit dashboard (\texttt{app.py}) for upload, threshold tuning, visualization, and exports.
+  \item \textbf{Engine layer:} detection pipeline (\texttt{suspicious\_by\_model.py}) for preprocessing, scoring, labeling, and explanations.
+  \item \textbf{ML artifacts:} trained Random Forest model, scaler schema, feature importances and metrics (\texttt{*.joblib}).
+  \item \textbf{Optional service layer:} FastAPI endpoints (\texttt{api/main.py}) for programmatic scoring.
+\end{itemize}
+
+\section{UML Diagrams / DFD (to attach)}
+As per guideline requirements, include the required UML diagrams (all 9 if asked by guide) or DFD levels if following structured design. Recommended attachments: Use Case, Activity, Sequence, and Class diagrams. Prepare in StarUML/draw.io and insert as figures.
+
+\section{ERD \& Normalization (optional)}
+FraudX currently uses CSV files. If extended to a database, an ERD can include Transactions, RiskLists, and ReviewCases (case status, notes, feedback), normalized up to 3NF.
+
+% -------------------------
+% VI) CODING / IMPLEMENTATION
+% -------------------------
+\chapter{Coding and Implementation}
+\section{Algorithms / Flowcharts}
+\subsection{Synthetic Data Generation and Training (\texttt{main.py})}
+\begin{enumerate}
+  \item Generate known fraudster IDs and sanctioned entity IDs and save them as CSV risk lists.
+  \item Create synthetic transactions with realistic attributes: amount, time, countries, currency, payment method, and behavior indicators.
+  \item Increase the probability of risky patterns for fraudulent transactions (high velocity, VPN usage, repeated failed attempts, etc.).
+  \item Apply one-hot encoding to categorical fields and scale numeric fields using \texttt{StandardScaler}.
+  \item Train a \texttt{RandomForestClassifier} and evaluate the model on a held-out test split.
+  \item Save artifacts: model, scaler (with schema), feature importances, and evaluation metrics.
+\end{enumerate}
+
+\subsection{Inference Pipeline (\texttt{suspicious\_by\_model.py})}
+\begin{enumerate}
+  \item Ensure required columns exist by defaulting missing fields (\texttt{\_ensure\_required\_columns}).
+  \item One-hot encode categorical features used for inference and align columns to the saved schema (\texttt{scaler.feature\_names\_in\_}).
+  \item Scale features and compute probability score using \texttt{predict\_proba} (\texttt{Suspicion\_Score}).
+  \item Apply the threshold to compute \texttt{Is\_Suspicious}.
+  \item Assign \texttt{Fraud\_Type} using prioritized rules (known fraudster, sanctioned, crypto cross-border, etc.).
+  \item Generate \texttt{Suspicion\_Reasons} using feature importance and simple comparisons.
+\end{enumerate}
+
+\section{Software Used}
+Python, pandas, numpy, scikit-learn, joblib, Streamlit, Plotly, and optional FastAPI.
+
+\section{Hardware Specification}
+Minimum: a standard laptop/desktop. Recommended: 8GB RAM for smoother visualization and CSV processing.
+
+\section{Programming Language and Platform}
+Python on Windows/Linux/macOS.
+
+\section{Tools}
+Cursor/VS Code, Git, and pip.
+
+% -------------------------
+% VII) TEST DATASETS, RESULT AND ANALYSIS
+% -------------------------
+\chapter{Test Data Sets, Results and Analysis}
+\section{Test Datasets}
+\begin{itemize}
+  \item \texttt{transactions.csv} generated by the training script.
+  \item Risk lists: \texttt{known\_fraudsters.csv} and \texttt{sanctioned\_entities.csv}.
+  \item User-uploaded CSV files for demonstration and analysis.
+\end{itemize}
+
+\section{Results}
+The training pipeline stores metrics in \texttt{model\_metrics.joblib}. Documentation reports approximately: Accuracy 95.2\%, Precision 94.8\%, Recall 93.5\%, F1-score 94.1\%. These results are obtained on synthetic data and mainly confirm that the model learned meaningful synthetic patterns. For production-grade evaluation, time-based validation, PR-AUC, and cost-sensitive threshold selection are recommended.
+
+\section{Analysis}
+FraudX provides both a score and interpretable outputs. The threshold acts as a practical control knob: increasing it reduces flagged cases (lower analyst workload) but may miss some fraud, while lowering it increases detection coverage but can increase false positives. The rule-based \texttt{Fraud\_Type} helps segment suspicious behavior into consistent categories, and the explanation text supports faster initial review.
+
+% -------------------------
+% VIII) TESTING
+% -------------------------
+\chapter{Testing}
+\section{Test Plan}
+Testing covers correctness of upload, schema handling, scoring stability, rule correctness, explanation readability, and export integrity.
+
+\section{Sample Test Cases}
+\begin{longtable}{p{1.8cm}p{7.4cm}p{4.4cm}}
+\toprule
+\textbf{ID} & \textbf{Test Case} & \textbf{Expected Result} \\\midrule
+TC01 & Upload valid CSV with recommended columns & Scoring completes; outputs created \\
+TC02 & Upload CSV with missing fields & Defaults applied; scoring still completes \\
+TC03 & Change threshold 0.5 $\rightarrow$ 0.8 & Number of suspicious rows decreases \\
+TC04 & \texttt{Is\_Known\_Fraudster=True} & \texttt{Fraud\_Type} becomes \textit{Known Fraudster} \\
+TC05 & Export suspicious subset & Export includes score/type/reasons \\
+\bottomrule
+\end{longtable}
+
+\section{Test Results}
+Manual testing confirms end-to-end functionality from upload to export. Future work includes automated unit tests for preprocessing alignment and regression tests for rule priority.
+
+% -------------------------
+% IX) AI AND DATA SCIENCE
+% -------------------------
+\chapter{Artificial Intelligence and Data Science}
+\section{Algorithms and Techniques Used}
+\begin{itemize}
+  \item \textbf{Random Forest (supervised learning):} predicts fraud likelihood.
+  \item \textbf{StandardScaler:} normalizes numeric features.
+  \item \textbf{One-hot encoding:} converts categorical features to model-ready vectors.
+  \item \textbf{Thresholding:} converts scores into operational decisions.
+  \item \textbf{Hybrid rules:} provides deterministic category labels for interpretation.
+\end{itemize}
+
+\section{Explainability}
+FraudX provides explanations through feature importance and rule-based reason statements. This gives analysts quick context. A stronger next step is SHAP-based per-transaction explanations and storing explanation metadata for audit purposes.
+
+% -------------------------
+% X) SOFTWARE QUALITY ASSURANCE
+% -------------------------
+\chapter{Software Quality Assurance Considerations}
+\section{Quality Goals}
+\begin{itemize}
+  \item Correctness and reproducibility of scoring results.
+  \item Reliability across different CSV formats.
+  \item Usability for analyst workflow.
+  \item Maintainability via modular code and persisted artifacts.
+\end{itemize}
+
+\section{Recommended SQA Activities}
+Code reviews, automated unit and integration tests, artifact versioning, and monitoring in production deployments.
+
+% -------------------------
+% CONCLUSION
+% -------------------------
+\chapter{Conclusion}
+FraudX demonstrates a complete fraud screening workflow: synthetic data generation, supervised model training, persisted artifacts, and an analyst-oriented Streamlit dashboard that scores, flags, labels, and explains suspicious records. The project’s hybrid approach---probability-based ranking plus deterministic categories---helps both prioritization and interpretability. As a next step toward real deployment, the system would require real labeled datasets, time-based evaluation (PR-AUC), cost-sensitive thresholding, drift monitoring, strong security controls, and audit-grade explanation storage.
+
+% -------------------------
+% REFERENCES (IEEE style examples)
+% -------------------------
+\begin{thebibliography}{9}
+\bibitem{rf} L. Breiman, ``Random Forests,'' \textit{Machine Learning}, vol. 45, pp. 5--32, 2001.
+\bibitem{sklearn} F. Pedregosa et al., ``Scikit-learn: Machine Learning in Python,'' \textit{Journal of Machine Learning Research}, 12, pp. 2825--2830, 2011.
+\bibitem{streamlit} Streamlit Documentation, \url{https://docs.streamlit.io/}.
+\bibitem{fastapi} FastAPI Documentation, \url{https://fastapi.tiangolo.com/}.
+\end{thebibliography}
+
+% -------------------------
+% GLOSSARY
+% -------------------------
+\chapter*{Glossary}
+\begin{longtable}{p{4cm}p{10cm}}
+\toprule
+\textbf{Term} & \textbf{Meaning} \\\midrule
+Suspicion Score & Model probability-like risk score per transaction.\\
+Threshold & Value used to convert score into a suspicious/not suspicious decision.\\
+One-hot encoding & Converts categorical variables into binary indicator columns.\\
+Concept drift & Fraud patterns change over time, reducing model performance.\\
+PR-AUC & Precision--Recall area under curve; useful for imbalanced datasets.\\
+\bottomrule
+\end{longtable}
+
+\end{document}
+

@@ -2,6 +2,39 @@ import pandas as pd
 import numpy as np
 import numpy as np
 
+REQUIRED_INPUT_COLUMNS = {
+    # Required for preprocessing (categorical encoding)
+    'Sender_Country': 'Unknown',
+    'Receiver_Country': 'Unknown',
+    'Payment_Method': 'Unknown',
+    'Transaction_Currency': 'UNK',
+    # Required/commonly used downstream (explanations / analytics)
+    'Sender_ID': 'UNKNOWN_SENDER',
+    'Transaction_ID': 'UNKNOWN_TX',
+    # Numeric / boolean features used in rules & explanations
+    'Transaction_Amount': 0.0,
+    'Transaction_Velocity': 0.0,
+    'Unusual_Time': False,
+    'Multiple_Currency_Conversions': False,
+    'Repeated_Failed_Attempts': 0,
+    'Is_Known_Fraudster': False,
+    'Is_Sanctioned_Entity': False,
+    'VPN_Usage': False,
+    'IP_Address_Change': False,
+    'Is_New_Device': False,
+    'Is_New_Location': False,
+}
+
+def _ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure the minimum schema exists for preprocessing and explanations.
+
+    Uploaded CSVs often have missing columns; we default them so scoring can proceed.
+    """
+    for col, default in REQUIRED_INPUT_COLUMNS.items():
+        if col not in df.columns:
+            df[col] = default
+    return df
+
 def patch_model_for_compatibility(model):
     """Patch model to handle monotonic_cst attribute compatibility issues"""
     try:
@@ -25,6 +58,7 @@ def detect_suspicious_transactions(df, model, scaler, threshold=0.5):
     # Patch the model for compatibility
     model = patch_model_for_compatibility(model)
     
+    df = _ensure_required_columns(df)
     X = preprocess_data(df, scaler)
     X_scaled = scaler.transform(X)
     
@@ -43,9 +77,13 @@ def detect_suspicious_transactions(df, model, scaler, threshold=0.5):
     df['Suspicion_Score'] = y_pred_proba
     df['Is_Suspicious'] = y_pred_proba > threshold
     
+    # Classify fraud types for analysis/visualization
+    df['Fraud_Type'] = df.apply(lambda row: classify_fraud_type(row, threshold), axis=1)
+    
     return df
 
 def preprocess_data(df, scaler):
+    df = _ensure_required_columns(df)
     categorical_columns = ['Sender_Country', 'Receiver_Country', 'Payment_Method', 'Transaction_Currency']
     df_encoded = pd.get_dummies(df, columns=categorical_columns)
     
@@ -59,6 +97,9 @@ def preprocess_data(df, scaler):
 
 def explain_suspicion(row, feature_importances, historical_data, threshold=0.05):
     reasons = []
+    if 'Sender_ID' not in historical_data.columns:
+        historical_data = historical_data.copy()
+        historical_data['Sender_ID'] = 'UNKNOWN_SENDER'
     sender_history = historical_data[historical_data['Sender_ID'] == row['Sender_ID']]
     for feature, importance in feature_importances.items():
         if importance > threshold:
@@ -96,3 +137,49 @@ def explain_suspicion(row, feature_importances, historical_data, threshold=0.05)
             reasons.append(f"Moderate overall suspicion score ({row['Suspicion_Score']:.2f})")
     
     return ', '.join(set(reasons)) if reasons else "No specific reason identified"
+
+def classify_fraud_type(row, threshold: float = 0.5) -> str:
+    """Assign a primary fraud type label based on rules and model score.
+
+    Priority order ensures a single, consistent primary classification per transaction.
+    """
+    # High-level categories (ordered by priority)
+    is_known_fraud = bool(row.get('Is_Known_Fraudster', False))
+    is_sanctioned = bool(row.get('Is_Sanctioned_Entity', False))
+    is_cross_border = row.get('Sender_Country', 'Unknown') != row.get('Receiver_Country', 'Unknown')
+    is_crypto = any(k in row.index and row[k] for k in ['Payment_Method_Cryptocurrency', 'Payment_Method_Crypto', 'Payment_Method_crypto'])
+    high_amount = float(row.get('Transaction_Amount', 0)) >= 10000
+    high_velocity = float(row.get('Transaction_Velocity', 0)) >= 8
+    unusual_time = bool(row.get('Unusual_Time', False))
+    multi_fx = bool(row.get('Multiple_Currency_Conversions', False))
+    vpn = bool(row.get('VPN_Usage', False))
+    ip_change = bool(row.get('IP_Address_Change', False))
+    new_device = bool(row.get('Is_New_Device', False) or row.get('Device_Change', False))
+    new_location = bool(row.get('Is_New_Location', False))
+    failed_attempts = int(row.get('Repeated_Failed_Attempts', 0)) >= 3
+    score = float(row.get('Suspicion_Score', 0.0))
+
+    # Primary classification based on priority
+    if is_known_fraud:
+        return 'Known Fraudster'
+    if is_sanctioned:
+        return 'Sanctioned Entity'
+    if is_crypto and is_cross_border and (high_amount or multi_fx):
+        return 'Crypto Cross-border Laundering'
+    if is_cross_border and multi_fx:
+        return 'Cross-border FX Risk'
+    if high_amount and high_velocity:
+        return 'Rapid Large Transfers'
+    if vpn or ip_change:
+        return 'Anonymity/Device Evasion'
+    if new_device or new_location:
+        return 'Account Takeover (ATO) Risk'
+    if failed_attempts:
+        return 'Credential Stuffing/Brute Force'
+    if unusual_time:
+        return 'Odd-hour Activity'
+    if score >= max(0.8, threshold):
+        return 'High-Risk (Model)'
+    if score >= threshold:
+        return 'Medium-Risk (Model)'
+    return 'Low-Risk' 

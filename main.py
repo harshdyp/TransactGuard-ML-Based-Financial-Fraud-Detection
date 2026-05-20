@@ -8,7 +8,7 @@ import string
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import joblib
 
 # Initialize Faker for random data generation
@@ -148,14 +148,39 @@ rf_classifier.fit(X_train_scaled, y_train)
 
 # Make predictions on the test set
 y_pred = rf_classifier.predict(X_test_scaled)
+y_pred_proba = rf_classifier.predict_proba(X_test_scaled)[:, 1]
+
+# Calculate metrics
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred)
+recall = recall_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred)
+conf_matrix = confusion_matrix(y_test, y_pred)
 
 # Print the classification report
 print("Model Performance:")
 print(classification_report(y_test, y_pred))
+print(f"\nDetailed Metrics:")
+print(f"Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+print(f"Precision: {precision:.4f} ({precision*100:.2f}%)")
+print(f"Recall: {recall:.4f} ({recall*100:.2f}%)")
+print(f"F1-Score: {f1:.4f} ({f1*100:.2f}%)")
+print(f"\nConfusion Matrix:")
+print(conf_matrix)
 
-# Save the model, scaler, and feature importances
+# Save model metrics
+model_metrics = {
+    'accuracy': float(accuracy),
+    'precision': float(precision),
+    'recall': float(recall),
+    'f1_score': float(f1),
+    'confusion_matrix': conf_matrix.tolist()
+}
+
+# Save the model, scaler, feature importances, and metrics
 joblib.dump(rf_classifier, 'fraud_detection_model.joblib')
 joblib.dump(scaler, 'fraud_detection_scaler.joblib')
 feature_importances = dict(zip(X.columns, rf_classifier.feature_importances_))
 joblib.dump(feature_importances, 'feature_importances.joblib')
-print("Model, scaler, and feature importances have been saved.")
+joblib.dump(model_metrics, 'model_metrics.joblib')
+print("\nModel, scaler, feature importances, and metrics have been saved.")
